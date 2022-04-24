@@ -68,11 +68,15 @@ if __name__ == '__main__':
         print("请配置并重新运行")
         sys.exit(0)
     for _ in range(int(config.get(loop))):
-        lock_screen(duration=float(config.get(lock_time)), passwd=config.get(passwd))
+        first_run = None
         day_config = python_box.read_config(config_log_ini)
-        if day_config.get(today != _get_today()):
-            day_config.update[today] = _get_today()
-            day_config.update[day_time] = 0
+        if day_config.get(today) != _get_today():
+            day_config[today] = _get_today()
+            day_config[day_time] = 0
+            first_run = True
+        if not first_run:
+            lock_screen(duration=float(config.get(lock_time)), passwd=config.get(passwd))
+            first_run = False
         if float(day_config.get(day_time)) < float(config.get(day_limit)):
             r = float(config.get(unlock_time))
             time.sleep(r * 60)
