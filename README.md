@@ -8,8 +8,8 @@
 
 配置
 - 运行一次后生成配置文件config.ini
-  - lock_time=0.2 #
-  - work_time=0.2
-  - loop=2
-  - passwd=123
-  - day_limit=1
+  - lock_time=5 #锁屏时间
+  - unlock_time=25 #解锁时间
+  - loop=48 #循环次数
+  - passwd=123 # 解锁密码
+  - day_limit=100 # 每天限制使用时间

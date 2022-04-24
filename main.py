@@ -62,8 +62,8 @@ if __name__ == '__main__':
     day_limit = "day_limit"
     passwd = "passwd"
     config = python_box.read_config("config/config.ini",
-                                    {lock_time: 5, ("%s" % unlock_time): 25, ("%s" % loop): 10, ("%s" % passwd): 123,
-                                     ("%s" % day_limit): 1}, )
+                                    {lock_time: 5, ("%s" % unlock_time): 25, ("%s" % loop): 48, ("%s" % passwd): 123,
+                                     ("%s" % day_limit): 100}, )
     if not config:
         print("请配置并重新运行")
         sys.exit(0)
