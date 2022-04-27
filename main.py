@@ -3,7 +3,7 @@ import ctypes
 import sys
 import time
 
-import PySimpleGUI
+import PySimpleGUI as sg
 import pyautogui
 
 from common import python_box
@@ -15,28 +15,35 @@ def lock_screen(duration=0.2, passwd=None, **kwargs):
     bk_color = "#3C3F41"
     user32 = ctypes.windll.user32
     screensize = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
-    timer = PySimpleGUI.Text(time.strftime("%Y-%m-%d", time.localtime()),
-                             key="_time_",
-                             background_color=bk_color,
-                             size=(10, 1),
-                             text_color="")
-    gui_input = PySimpleGUI.Input(key=("%s" % key_input))
-    btn_quit = PySimpleGUI.Button(button_color=('black', 'orange'), button_text=key_quit)
+    timer = sg.Text(time.strftime("%Y-%m-%d", time.localtime()),
+                    key="_time_",
+                    justification='center',
+                    font=f"any {int(screensize[0] / 10)}",
+                    background_color=bk_color
+                    )
+    gui_input = sg.Input(key=("%s" % key_input))
+    btn_quit = sg.Button(button_color=('black', 'orange'), button_text=key_quit)
 
-    column = [[timer], [gui_input, btn_quit], ]
-    layout = [[PySimpleGUI.Column(column, background_color=bk_color)]]
-
-    window = PySimpleGUI.Window('Stand Up And Drink Water',
-                                layout,
-                                no_titlebar=True,
-                                keep_on_top=True,
-                                disable_close=True,
-                                disable_minimize=True,
-                                grab_anywhere=False,
-                                background_color=bk_color,
-                                alpha_channel=1,
-                                size=screensize
-                                )
+    column = [
+        [timer, ],
+        [gui_input, btn_quit, ],
+    ]
+    layout = [[sg.VPush(background_color=bk_color)],
+              [sg.Push(background_color=bk_color),
+               sg.Column(column, element_justification='c', background_color=bk_color),
+               sg.Push(background_color=bk_color)],
+              [sg.VPush(background_color=bk_color)]]
+    window = sg.Window('Stand Up And Drink Water',
+                       layout,
+                       no_titlebar=True,
+                       keep_on_top=True,
+                       disable_close=True,
+                       disable_minimize=True,
+                       grab_anywhere=False,
+                       background_color=bk_color,
+                       alpha_channel=1,
+                       size=screensize
+                       )
     start = time.time()
     while True:
         event, values = window.Read(timeout=3000)
