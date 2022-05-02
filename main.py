@@ -9,9 +9,15 @@ import pyautogui
 from common import python_box
 
 
-def lock_screen(duration=0.2, passwd=None, **kwargs):
+def lock_screen(duration=0.2, passwd=None, **kwargs) -> bool:
+    """
+    锁屏ui
+    :param duration:
+    :param passwd:
+    :param kwargs:
+    :return: 是否密码解锁
+    """
     key_input = "input"
-    key_quit = "确认"
     bk_color = "#3C3F41"
     user32 = ctypes.windll.user32
     screensize = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
@@ -21,12 +27,10 @@ def lock_screen(duration=0.2, passwd=None, **kwargs):
                     font=f"any {int(screensize[0] / 10)}",
                     background_color=bk_color
                     )
-    gui_input = sg.Input(key=("%s" % key_input))
-    btn_quit = sg.Button(button_color=('black', 'orange'), button_text=key_quit)
-
+    gui_input = sg.Input(key=key_input, password_char="*")
     column = [
         [timer, ],
-        [gui_input, btn_quit, ],
+        [gui_input, ],
     ]
     layout = [[sg.VPush(background_color=bk_color)],
               [sg.Push(background_color=bk_color),
@@ -45,13 +49,21 @@ def lock_screen(duration=0.2, passwd=None, **kwargs):
                        size=screensize
                        )
     start = time.time()
+    pyautogui.FAILSAFE = False
     while True:
-        event, values = window.Read(timeout=3000)
-        pyautogui.keyDown("esc")
-        pyautogui.keyUp("esc")
-        if time.time() - start > duration * 60 or values.get(key_input) == passwd:
+        event, values = window.Read(timeout=300)
+        focus = window.find_element_with_focus()
+        if not focus:
+            pyautogui.keyDown("esc")
+            pyautogui.keyUp("esc")
+            pyautogui.keyDown("tab")
+            pyautogui.keyUp("tab")
+        if time.time() - start > duration * 60:
             window.close()
-            break
+            return False
+        if values.get(key_input) == passwd:
+            window.close()
+            return True
 
 
 def _get_today():
@@ -76,15 +88,17 @@ if __name__ == '__main__':
         sys.exit(0)
     for _ in range(int(config.get(loop))):
         first_run = None
+        use_passwd = None
         day_config = python_box.read_config(config_log_ini)
         if day_config.get(today) != _get_today():
             day_config[today] = _get_today()
             day_config[day_time] = 0
             first_run = True
         if not first_run:
-            lock_screen(duration=float(config.get(lock_time)), passwd=config.get(passwd))
+            use_passwd = lock_screen(duration=float(config.get(lock_time)), passwd=config.get(passwd))
             first_run = False
-        if float(day_config.get(day_time)) < float(config.get(day_limit)):
+        overtime = float(day_config.get(day_time)) >= float(config.get(day_limit))
+        if not overtime or use_passwd or (overtime and use_passwd):
             r = float(config.get(unlock_time))
             time.sleep(r * 60)
             day_config[day_time] = float(day_config.get(day_time)) + r
