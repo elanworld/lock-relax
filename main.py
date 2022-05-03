@@ -7,6 +7,7 @@ import PySimpleGUI as sg
 import pyautogui
 
 from common import python_box
+import keyboard
 
 
 def lock_screen(duration=0.2, passwd=None, **kwargs) -> bool:
@@ -50,19 +51,16 @@ def lock_screen(duration=0.2, passwd=None, **kwargs) -> bool:
                        )
     start = time.time()
     pyautogui.FAILSAFE = False
+    keyboard.hook_key("windows", lambda x : print(x), True)
     while True:
         event, values = window.Read(timeout=300)
-        focus = window.find_element_with_focus()
-        if not focus:
-            pyautogui.keyDown("esc")
-            pyautogui.keyUp("esc")
-            pyautogui.keyDown("tab")
-            pyautogui.keyUp("tab")
         if time.time() - start > duration * 60:
             window.close()
+            keyboard.unhook_key("windows")
             return False
         if values.get(key_input) == passwd:
             window.close()
+            keyboard.unhook_key("windows")
             return True
 
 
