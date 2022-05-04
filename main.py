@@ -4,7 +4,6 @@ import sys
 import time
 
 import PySimpleGUI as sg
-import pyautogui
 
 from common import python_box
 import keyboard
@@ -50,7 +49,6 @@ def lock_screen(duration=0.2, passwd=None, **kwargs) -> bool:
                        size=screensize
                        )
     start = time.time()
-    pyautogui.FAILSAFE = False
     keyboard.hook_key("windows", lambda x : print(x), True)
     while True:
         event, values = window.Read(timeout=300)
