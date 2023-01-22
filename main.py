@@ -4,9 +4,12 @@ import sys
 import time
 
 import PySimpleGUI as sg
+import keyboard
+import paho.mqtt.client as mqtt
 
 from common import python_box
-import keyboard
+from tools.server_box.homeassistant_mq_entity import HomeAssistantEntity
+from tools.server_box.mqtt_utils import MqttBase
 
 
 def lock_screen(duration=0.2, passwd=None, **kwargs) -> bool:
@@ -49,7 +52,7 @@ def lock_screen(duration=0.2, passwd=None, **kwargs) -> bool:
                        size=screensize
                        )
     start = time.time()
-    keyboard.hook_key("windows", lambda x : print(x), True)
+    keyboard.hook_key("windows", lambda x: print(x), True)
     while True:
         event, values = window.Read(timeout=300)
         if time.time() - start > duration * 60:
@@ -66,22 +69,38 @@ def _get_today():
     return python_box.date_format(fmt="%Y%m%d")
 
 
+def will_set(client: mqtt.Client):
+    tmp = HomeAssistantEntity(None)
+    client.will_set(tmp.status_topic, "offline")
+
+
 if __name__ == '__main__':
     loop = "loop"
     lock_time = "lock_time"
     unlock_time = "unlock_time"
-    day_time = "day_time"
+    day_time = "day_time" + _get_today()
     today = "today"
     config_log_ini = "config/log.ini"
     day_config = python_box.read_config("%s" % config_log_ini, {("%s" % day_time): 0, ("%s" % today): _get_today()})
     day_limit = "day_limit"
     passwd = "passwd"
+    host = "mq host"
+    port = "mq port"
+    message = "send message"
     config = python_box.read_config("config/config.ini",
-                                    {lock_time: 5, ("%s" % unlock_time): 25, ("%s" % loop): 48, ("%s" % passwd): 123,
+                                    {("%s" % host): "localhost",
+                                     ("%s" % port): "1883",
+                                     ("%s" % message): "0#是否发送消息1 0", lock_time: 5, ("%s" % unlock_time): 25,
+                                     ("%s" % loop): 48, ("%s" % passwd): 123,
                                      ("%s" % day_limit): 100}, )
     if not config:
         print("请配置并重新运行")
         sys.exit(0)
+    send_state = config.get(message) == "1"
+    if send_state:
+        base = MqttBase(config.get(host), int(config.get(port)), None, will_set)
+        entity_lock = HomeAssistantEntity(base, "lock")
+        entity_lock.send_sensor_config_topic("lock", "锁屏时间", "分钟", keep=True)
     for _ in range(int(config.get(loop))):
         first_run = None
         use_passwd = None
@@ -98,4 +117,6 @@ if __name__ == '__main__':
             r = float(config.get(unlock_time))
             time.sleep(r * 60)
             day_config[day_time] = float(day_config.get(day_time)) + r
+            if send_state:
+                entity_lock.send_sensor_state(day_config[day_time])
         python_box.write_config(day_config, config_log_ini)
