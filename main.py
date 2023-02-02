@@ -98,13 +98,20 @@ if __name__ == '__main__':
         sys.exit(0)
     send_state = config.get(message) == "1"
     if send_state:
-        base = MqttBase(config.get(host), int(config.get(port)), None, will_set)
-        entity_lock = HomeAssistantEntity(base, "lock")
-        entity_lock.send_sensor_config_topic("lock", "锁屏时间", "分钟", keep=True)
+        try:
+            base = MqttBase(config.get(host), int(config.get(port)), None, will_set)
+            entity_lock = HomeAssistantEntity(base, "lock")
+            entity_lock.send_sensor_config_topic("lock", "锁屏时间", "分钟", keep=True)
+        except Exception as e:
+            print(e)
+            send_state = False
     for _ in range(int(config.get(loop))):
+        # 首次运行
         first_run = None
         use_passwd = None
         day_config = python_box.read_config(config_log_ini)
+        if send_state:
+            entity_lock.send_sensor_state(day_config[day_time])
         if day_config.get(today) != _get_today():
             day_config[today] = _get_today()
             day_config[day_time] = 0
@@ -112,11 +119,12 @@ if __name__ == '__main__':
         if not first_run:
             use_passwd = lock_screen(duration=float(config.get(lock_time)), passwd=config.get(passwd))
             first_run = False
-        overtime = float(day_config.get(day_time)) >= float(config.get(day_limit))
+        overtime = float(day_config.get(day_time)) >= float(config.get(day_limit))  # 超时
         if not overtime or use_passwd or (overtime and use_passwd):
             r = float(config.get(unlock_time))
             time.sleep(r * 60)
             day_config[day_time] = float(day_config.get(day_time)) + r
+            python_box.write_config(day_config, config_log_ini)
             if send_state:
                 entity_lock.send_sensor_state(day_config[day_time])
         python_box.write_config(day_config, config_log_ini)
