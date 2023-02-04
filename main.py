@@ -101,7 +101,7 @@ if __name__ == '__main__':
         try:
             base = MqttBase(config.get(host), int(config.get(port)), None, will_set)
             entity_lock = HomeAssistantEntity(base, "lock")
-            entity_lock.send_sensor_config_topic("lock", "锁屏时间", "分钟", keep=True)
+            entity_lock.send_sensor_config_topic("lock", "锁屏时间", "分钟", keep=True, expire_after=None)
         except Exception as e:
             print(e)
             send_state = False
