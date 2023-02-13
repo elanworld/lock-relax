@@ -103,6 +103,9 @@ if __name__ == '__main__':
                 base = MqttBase(config.get(host), int(config.get(port)), None, will_set)
                 entity_lock = HomeAssistantEntity(base, "lock")
                 entity_lock.send_sensor_config_topic("lock", "锁屏时间", "分钟", keep=True, expire_after=None)
+                entity_online = HomeAssistantEntity(base, "lock")
+                entity_online.send_sensor_config_topic("lock_state", "锁屏状态", keep=False, expire_after=None)
+                entity_online.send_online()
             except Exception as e:
                 print(e)
                 send_state = False
@@ -115,6 +118,7 @@ if __name__ == '__main__':
                 day_config[day_time] = 0
             if send_state:
                 entity_lock.send_sensor_state(day_config[day_time])
+                entity_online.send_sensor_state("在线")
             if day_config.get(today) != _get_today():
                 day_config[today] = _get_today()
                 day_config[day_time] = 0
