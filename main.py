@@ -20,6 +20,8 @@ def lock_screen(duration=0.2, passwd=None, **kwargs) -> bool:
     :param kwargs:
     :return: 是否密码解锁
     """
+    if duration == 0:
+        return False
     key_input = "input"
     bk_color = "#3C3F41"
     user32 = ctypes.windll.user32
