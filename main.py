@@ -129,7 +129,7 @@ if __name__ == '__main__':
                 use_passwd = lock_screen(duration=float(config.get(lock_time)), passwd=config.get(passwd))
                 first_run = False
             overtime = float(day_config.get(day_time)) >= float(config.get(day_limit))  # 超时
-            if not overtime or use_passwd or (overtime and use_passwd):
+            if not overtime or use_passwd or float(config.get(lock_time)) == 0:
                 r = float(config.get(unlock_time))
                 for i in range(int(r if r >= 1 else 1)):  # 测试:默认不为0
                     time.sleep(60 if r >= 1 else 4)  # 测试:默认不为0
