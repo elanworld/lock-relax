@@ -72,7 +72,7 @@ def _get_today():
 
 
 def will_set(client: mqtt.Client):
-    tmp = HomeAssistantEntity(None)
+    tmp = HomeAssistantEntity(None, "lock")
     client.will_set(tmp.status_topic, "offline")
 
 
