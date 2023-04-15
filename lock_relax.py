@@ -15,7 +15,7 @@ from tools.server_box.mqtt_utils import MqttBase
 def lock_screen(duration=0.2, passwd=None, **kwargs) -> bool:
     """
     锁屏ui
-    :param duration:
+    :param duration: 锁屏时长：分
     :param passwd:
     :param kwargs:
     :return: 是否密码解锁
@@ -106,8 +106,7 @@ if __name__ == '__main__':
                 entity_lock = HomeAssistantEntity(base, "lock")
                 entity_lock.send_sensor_config_topic("lock", "锁屏时间", "分钟", keep=True, expire_after=None)
                 entity_online = HomeAssistantEntity(base, "lock")
-                entity_online.send_sensor_config_topic("lock_state", "锁屏状态", keep=False, expire_after=None)
-                entity_online.send_online()
+                entity_online.send_switch_config_topic("lock_state", "锁屏在线")
             except Exception as e:
                 print(e)
                 send_state = False
@@ -120,24 +119,27 @@ if __name__ == '__main__':
                 day_config[day_time] = 0
             if send_state:
                 entity_lock.send_sensor_state(day_config[day_time])
-                entity_online.send_sensor_state("在线")
+                entity_online.send_switch_state(True)
             if day_config.get(today) != _get_today():
                 day_config[today] = _get_today()
                 day_config[day_time] = 0
                 first_run = True
+            # 锁屏
             if not first_run:
-                use_passwd = lock_screen(duration=float(config.get(lock_time)), passwd=config.get(passwd))
                 first_run = False
-            overtime = float(day_config.get(day_time)) >= float(config.get(day_limit))  # 超时
-            if not overtime or use_passwd or float(config.get(lock_time)) == 0:
-                r = float(config.get(unlock_time))
-                for i in range(int(r if r >= 1 else 1)):  # 测试:默认不为0
-                    time.sleep(60 if r >= 1 else 4)  # 测试:默认不为0
-                    day_config[day_time] = float(day_config.get(day_time)) + 1
-                    python_box.write_config(day_config, config_log_ini)
-                    if send_state:
-                        entity_lock.send_sensor_state(day_config[day_time])
-            python_box.write_config(day_config, config_log_ini)
+                if float(config.get(lock_time)) != 0:
+                    use_passwd = lock_screen(duration=float(config.get(lock_time)), passwd=config.get(passwd))
+            # 解锁
+            r = float(config.get(unlock_time))
+            for i in range(int(r if r >= 1 else 1)):  # 测试:默认不为0
+                if not use_passwd and float(day_config.get(day_time)) >= float(config.get(day_limit)):  # 判断解锁时间是否超过
+                    break  # 不使用密码超过则直接退出循环
+                time.sleep(60 if r >= 1 else 4)  # 测试:默认不为0
+                day_config[day_time] = float(day_config.get(day_time)) + 1
+                python_box.write_config(day_config, config_log_ini)
+                if send_state:
+                    entity_lock.send_sensor_state(day_config[day_time])
+                python_box.write_config(day_config, config_log_ini)
     except Exception as e:
         for i in range(50):
             lock_screen(duration=30, passwd=config.get(passwd))

@@ -1,1 +1,1 @@
-pyinstaller -Fw -p ../.. main.py
+pyinstaller -Fw -p ../.. lock_relax.py
