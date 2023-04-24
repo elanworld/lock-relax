@@ -99,7 +99,7 @@ if __name__ == '__main__':
         if not config:
             print("请配置并重新运行")
             sys.exit(0)
-        send_state = config.get(message) == "1"
+        send_state = config.get(message) == 1
         if send_state:
             try:
                 base = MqttBase(config.get(host), int(config.get(port)), None, will_set)
