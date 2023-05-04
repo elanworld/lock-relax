@@ -82,29 +82,34 @@ if __name__ == '__main__':
     unlock_time = "unlock_time"
     day_time = "day_time" + _get_today()
     today = "today"
-    config_log_ini = "config/log.ini"
-    day_config = python_box.read_config("%s" % config_log_ini, {("%s" % day_time): 0, ("%s" % today): _get_today()})
+    config_log_ini = "config/log_lock_relax.ini"
+    startup_count = "startup count"
+    day_config = python_box.read_config("%s" % config_log_ini, {("%s" % day_time): 0, ("%s" % today): _get_today(), startup_count: 0})
     day_limit = "day_limit"
     passwd = "passwd"
     host = "mq host"
     port = "mq port"
     message = "send message"
-    config = python_box.read_config("config/config.ini",
-                                    {("%s" % host): "localhost",
-                                     ("%s" % port): "1883",
-                                     ("%s" % message): "0#是否发送消息1 0", lock_time: 5, ("%s" % unlock_time): 25,
-                                     ("%s" % loop): 48, ("%s" % passwd): 123,
-                                     ("%s" % day_limit): 100}, )
+    config = python_box.read_config("config/config_lock_relax.ini",
+                                        {("%s" % host): "localhost",
+                                         ("%s" % port): "1883",
+                                         ("%s" % message): "0#是否发送消息1 0", lock_time: 5, ("%s" % unlock_time): 25,
+                                         ("%s" % loop): 48, ("%s" % passwd): 123,
+                                         ("%s" % day_limit): 100}, )
     try:
         if not config:
             print("请配置并重新运行")
             sys.exit(0)
         send_state = config.get(message) == 1
+        day_config[startup_count] = day_config.get(startup_count, 0) + 1
+        python_box.write_config(day_config, config_log_ini)
         if send_state:
             try:
-                base = MqttBase(config.get(host), int(config.get(port)), None, will_set)
+                base = MqttBase(config.get(host), config.get(port), None, will_set)
                 entity_lock = HomeAssistantEntity(base, "lock")
                 entity_lock.send_sensor_config_topic("lock", "锁屏时间", "分钟", keep=True, expire_after=None)
+                entity_start_count = HomeAssistantEntity(base, "lock")
+                entity_start_count.send_sensor_config_topic("lock", "锁屏启动次数", "次", keep=True, expire_after=None)
                 entity_online = HomeAssistantEntity(base, "lock")
                 entity_online.send_switch_config_topic("lock_state", "锁屏在线")
             except Exception as e:
@@ -119,6 +124,7 @@ if __name__ == '__main__':
                 day_config[day_time] = 0
             if send_state:
                 entity_lock.send_sensor_state(day_config[day_time])
+                entity_start_count.send_sensor_state(day_config[startup_count])
                 entity_online.send_switch_state(True)
             if day_config.get(today) != _get_today():
                 day_config[today] = _get_today()
@@ -139,7 +145,6 @@ if __name__ == '__main__':
                 python_box.write_config(day_config, config_log_ini)
                 if send_state:
                     entity_lock.send_sensor_state(day_config[day_time])
-                python_box.write_config(day_config, config_log_ini)
     except Exception as e:
         for i in range(50):
             lock_screen(duration=30, passwd=config.get(passwd))
