@@ -1,6 +1,7 @@
 # 强制锁频休息
 import ctypes
 import sys
+import threading
 import time
 
 import PySimpleGUI as sg
@@ -61,7 +62,7 @@ def lock_screen(duration=0.2, passwd=None, **kwargs) -> bool:
             window.close()
             keyboard.unhook_key("windows")
             return False
-        if values.get(key_input) == passwd:
+        if values.get(key_input) == str(passwd):
             window.close()
             keyboard.unhook_key("windows")
             return True
@@ -84,12 +85,12 @@ if __name__ == '__main__':
     today = "today"
     config_log_ini = "config/log_lock_relax.ini"
     startup_count = "startup count"
-    day_config = python_box.read_config("%s" % config_log_ini, {("%s" % day_time): 0, ("%s" % today): _get_today(), startup_count: 0})
     day_limit = "day_limit"
     passwd = "passwd"
     host = "mq host"
     port = "mq port"
     message = "send message"
+    day_config = python_box.read_config("%s" % config_log_ini, {("%s" % day_time): 0, ("%s" % today): _get_today(), startup_count: 0})
     config = python_box.read_config("config/config_lock_relax.ini",
                                         {("%s" % host): "localhost",
                                          ("%s" % port): "1883",
@@ -103,6 +104,7 @@ if __name__ == '__main__':
         send_state = config.get(message) == 1
         day_config[startup_count] = day_config.get(startup_count, 0) + 1
         python_box.write_config(day_config, config_log_ini)
+        print(fr"config: {config}")
         if send_state:
             try:
                 base = MqttBase(config.get(host), config.get(port), None, will_set)
@@ -126,7 +128,7 @@ if __name__ == '__main__':
                 entity_lock.send_sensor_state(day_config[day_time])
                 entity_start_count.send_sensor_state(day_config[startup_count])
                 entity_online.send_switch_state(True)
-            if day_config.get(today) != _get_today():
+            if str(day_config.get(today)) != _get_today():
                 day_config[today] = _get_today()
                 day_config[day_time] = 0
                 first_run = True
@@ -146,5 +148,6 @@ if __name__ == '__main__':
                 if send_state:
                     entity_lock.send_sensor_state(day_config[day_time])
     except Exception as e:
-        for i in range(50):
+        for i in range(100):
             lock_screen(duration=30, passwd=config.get(passwd))
+
