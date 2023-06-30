@@ -1,7 +1,6 @@
 # 强制锁频休息
 import ctypes
 import sys
-import threading
 import time
 
 import PySimpleGUI as sg
@@ -77,6 +76,10 @@ def will_set(client: mqtt.Client):
     client.will_set(tmp.status_topic, "offline")
 
 
+def log_msg(msg):
+    python_box.log(msg, file="config/log_lock_console.log")
+
+
 if __name__ == '__main__':
     loop = "loop"
     lock_time = "lock_time"
@@ -99,23 +102,23 @@ if __name__ == '__main__':
                                          ("%s" % day_limit): 100}, )
     try:
         if not config:
-            print("请配置并重新运行")
+            log_msg("请配置并重新运行")
             sys.exit(0)
         send_state = config.get(message) == 1
         day_config[startup_count] = day_config.get(startup_count, 0) + 1
         python_box.write_config(day_config, config_log_ini)
-        print(fr"config: {config}")
+        log_msg(fr"config: {config}")
         if send_state:
             try:
                 base = MqttBase(config.get(host), config.get(port), None, will_set)
                 entity_lock = HomeAssistantEntity(base, "lock")
                 entity_lock.send_sensor_config_topic("lock", "锁屏时间", "分钟", keep=True, expire_after=None)
                 entity_start_count = HomeAssistantEntity(base, "lock")
-                entity_start_count.send_sensor_config_topic("lock", "锁屏启动次数", "次", keep=True, expire_after=None)
+                entity_start_count.send_sensor_config_topic("start", "锁屏启动次数", "次", keep=True, expire_after=None)
                 entity_online = HomeAssistantEntity(base, "lock")
                 entity_online.send_switch_config_topic("lock_state", "锁屏在线")
             except Exception as e:
-                print(e)
+                log_msg(e)
                 send_state = False
         for _ in range(int(config.get(loop))):
             # 首次运行
@@ -148,6 +151,8 @@ if __name__ == '__main__':
                 if send_state:
                     entity_lock.send_sensor_state(day_config[day_time])
     except Exception as e:
+        log_msg(e)
         for i in range(100):
-            lock_screen(duration=30, passwd=config.get(passwd))
-
+            res = lock_screen(duration=30, passwd=config.get(passwd))
+            if res:
+                time.sleep(10 * 60)
