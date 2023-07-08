@@ -106,7 +106,6 @@ if __name__ == '__main__':
             sys.exit(0)
         send_state = config.get(message) == 1
         day_config[startup_count] = day_config.get(startup_count, 0) + 1
-        python_box.write_config(day_config, config_log_ini)
         log_msg(fr"config: {config}")
         if send_state:
             try:
@@ -135,6 +134,7 @@ if __name__ == '__main__':
                 day_config[today] = _get_today()
                 day_config[day_time] = 0
                 first_run = True
+            python_box.write_config(day_config, config_log_ini)
             # 锁屏
             if not first_run:
                 first_run = False
