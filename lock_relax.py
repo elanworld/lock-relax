@@ -57,6 +57,7 @@ def lock_screen(duration=0.2, passwd=None, **kwargs) -> bool:
     keyboard.hook_key("windows", lambda x: print(x), True)
     while True:
         event, values = window.Read(timeout=300)
+        window.keep_on_top_set()
         if time.time() - start > duration * 60:
             window.close()
             keyboard.unhook_key("windows")
