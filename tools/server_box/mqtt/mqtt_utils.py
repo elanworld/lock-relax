@@ -78,7 +78,7 @@ class MqttBase:
                 # 使用正则表达式匹配通配符
                 pattern = topic_pattern.replace("+", "[^/]+").replace("#", ".*")
                 if re.fullmatch(pattern, msg.topic):
-                    callback(payload=payload, topic=msg.topic)
+                    python_box.thread_runner(callback, payload=payload, topic=msg.topic)
         except Exception as e:
             logging.error(f"message error: {e}")
 
