@@ -8,8 +8,8 @@ import keyboard
 import paho.mqtt.client as mqtt
 
 from common import python_box
-from tools.server_box.homeassistant_mq_entity import HomeAssistantEntity
-from tools.server_box.mqtt_utils import MqttBase
+from tools.server_box.mqtt.homeassistant_mq_entity import HomeAssistantEntity
+from tools.server_box.mqtt.mqtt_utils import MqttBase
 
 
 def lock_screen(duration=0.2, passwd=None, **kwargs) -> bool:
@@ -79,6 +79,11 @@ def will_set(client: mqtt.Client):
 
 def log_msg(msg):
     python_box.log(msg, file="config/log_lock_console.log")
+
+def for_generate_code():
+    MqttBase
+    python_box.read_config
+    python_box.random_str
 
 
 if __name__ == '__main__':

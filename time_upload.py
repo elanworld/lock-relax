@@ -5,8 +5,8 @@ import time
 import paho.mqtt.client as mqtt
 
 from common import python_box
-from tools.server_box.homeassistant_mq_entity import HomeAssistantEntity
-from tools.server_box.mqtt_utils import MqttBase
+from tools.server_box.mqtt.homeassistant_mq_entity import HomeAssistantEntity
+from tools.server_box.mqtt.mqtt_utils import MqttBase
 
 
 class UpTimer:
