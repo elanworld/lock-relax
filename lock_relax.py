@@ -2,8 +2,8 @@
 import ctypes
 import sys
 import time
-
-import PySimpleGUI as sg
+import tkinter as tk
+from tkinter import simpledialog
 import keyboard
 import paho.mqtt.client as mqtt
 
@@ -12,60 +12,167 @@ from tools.server_box.mqtt.homeassistant_mq_entity import HomeAssistantEntity
 from tools.server_box.mqtt.mqtt_utils import MqttBase
 
 
-def lock_screen(duration=0.2, passwd=None, **kwargs) -> bool:
+def show_countdown_warning(countdown_duration=30):
+    """显示30秒倒计时警告窗口，提示即将进入锁屏。
+    用户可以点击"开始"提前进入，或等待倒计时结束自动进入。
+    
+    :param countdown_duration: 倒计时秒数（默认30）
+    :return: True 表示用户点击了"开始"或倒计时结束
     """
-    锁屏ui
+    result = {'ready': False}
+    
+    root = tk.Tk()
+    root.title("锁屏警告")
+    root.geometry("400x200")
+    root.attributes('-topmost', True)
+    
+    # 居中显示
+    root.update_idletasks()
+    x = (root.winfo_screenwidth() // 2) - 200
+    y = (root.winfo_screenheight() // 2) - 100
+    root.geometry(f"+{x}+{y}")
+    
+    # 倒计时标签
+    countdown_var = tk.StringVar(value=str(countdown_duration))
+    lbl_countdown = tk.Label(root, textvariable=countdown_var, 
+                             font=('Arial', 72, 'bold'), fg='red')
+    lbl_countdown.pack(pady=20)
+    
+    # 提示文字
+    lbl_info = tk.Label(root, text='即将进入锁屏\n点击"开始"或等待倒计时结束', 
+                        font=('Arial', 14))
+    lbl_info.pack(pady=10)
+    
+    # 按钮框
+    btn_frame = tk.Frame(root)
+    btn_frame.pack(pady=20)
+    
+    def on_start():
+        result['ready'] = True
+        try:
+            root.destroy()
+        except Exception:
+            pass
+    
+    btn_start = tk.Button(btn_frame, text="开始", font=('Arial', 12, 'bold'), 
+                          command=on_start, width=15, bg='#FF6B6B', fg='white')
+    btn_start.pack(side=tk.LEFT, padx=10)
+    
+    # 倒计时逻辑
+    remaining = [countdown_duration]
+    
+    def update_countdown():
+        if remaining[0] <= 0:
+            result['ready'] = True
+            try:
+                root.destroy()
+            except Exception:
+                pass
+            return
+        
+        countdown_var.set(str(remaining[0]))
+        remaining[0] -= 1
+        root.after(1000, update_countdown)
+    
+    root.after(1000, update_countdown)
+    try:
+        root.mainloop()
+    except Exception:
+        pass
+    
+    return result['ready']
+
+def lock_screen(duration=0.2, passwd=None, require_confirm=False, **kwargs) -> bool:
+    """
+    锁屏ui (tkinter 实现，替代 PySimpleGUI)
     :param duration: 锁屏时长：分
-    :param passwd:
+    :param passwd: 密码
+    :param require_confirm: 是否需要点击确认按钮才能关闭（默认False）
     :param kwargs:
     :return: 是否密码解锁
     """
     if duration == 0:
         return False
-    key_input = "input"
+    
     bk_color = "#3C3F41"
     user32 = ctypes.windll.user32
     screensize = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
-    timer = sg.Text(time.strftime("%Y-%m-%d", time.localtime()),
-                    key="_time_",
-                    justification='center',
-                    font=f"any {int(screensize[0] / 10)}",
-                    background_color=bk_color
-                    )
-    gui_input = sg.Input(key=key_input, password_char="*")
-    column = [
-        [timer, ],
-        [gui_input, ],
-    ]
-    layout = [[sg.VPush(background_color=bk_color)],
-              [sg.Push(background_color=bk_color),
-               sg.Column(column, element_justification='c', background_color=bk_color),
-               sg.Push(background_color=bk_color)],
-              [sg.VPush(background_color=bk_color)]]
-    window = sg.Window('Stand Up And Drink Water',
-                       layout,
-                       no_titlebar=True,
-                       keep_on_top=True,
-                       disable_close=True,
-                       disable_minimize=True,
-                       grab_anywhere=False,
-                       background_color=bk_color,
-                       alpha_channel=1,
-                       size=screensize
-                       )
-    start = time.time()
+    
+    unlocked = {'v': False}
+    root = tk.Tk()
+    root.overrideredirect(True)
+    root.attributes('-topmost', True)
+    try:
+        root.attributes('-fullscreen', True)
+    except Exception:
+        root.geometry(f"{screensize[0]}x{screensize[1]}+0+0")
+    
+    root.configure(background=bk_color)
+    font_size = max(12, int(screensize[0] / 15))
+    
+    # 日期时间标签
+    time_var = tk.StringVar(value=time.strftime("%Y-%m-%d", time.localtime()))
+    lbl = tk.Label(root, textvariable=time_var, font=('Arial', font_size), 
+                   bg=bk_color, fg="white")
+    lbl.pack(expand=True, pady=20)
+    
+    # 密码输入框
+    entry_var = tk.StringVar()
+    entry = tk.Entry(root, textvariable=entry_var, show='*', 
+                     font=('Arial', int(font_size/10)), width=30)
+    entry.pack(pady=30)
+    entry.focus_set()
+
     keyboard.hook_key("windows", lambda x: print(x), True)
-    while True:
-        event, values = window.Read(timeout=300)
-        window.keep_on_top_set()
-        if time.time() - start > duration * 60:
-            window.close()
+    keyboard.hook_key("alt", lambda x: print(x), True)
+    
+    def close():
+        try:
             keyboard.unhook_key("windows")
-            return False
-        if values.get(key_input) == str(passwd):
-            window.close()
-            keyboard.unhook_key("windows")
-            return True
+            keyboard.unhook_key("alt")
+        except Exception:
+            pass
+        try:
+            root.destroy()
+        except Exception:
+            pass
+
+    
+    btn_confirm = tk.Button(root, text="确认", font=('Arial', 12, 'bold'), 
+                        command=close, width=15, bg='#2196F3', fg='white', state=tk.DISABLED)
+    
+    def check_input():
+        # Check password
+        if entry_var.get() == str(passwd):
+            unlocked['v'] = True
+            # 如果需要确认，等待用户点击按钮；否则直接关闭
+            close()
+            return
+        
+        # Check timeout
+        if time.time() - start_ts > duration * 60:
+            if not require_confirm:
+                close()
+                return
+            else:
+                entry_var.set("⏱ 时间已到，请点击确认")
+                entry['show'] = ''
+                if btn_confirm['state'] == tk.DISABLED:
+                    btn_confirm['state'] = tk.NORMAL
+                    btn_confirm.pack(pady=20)
+        
+        # Update time label
+        time_var.set(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+        root.after(300, check_input)
+    
+    start_ts = time.time()
+    root.after(300, check_input)
+    try:
+        root.mainloop()
+    except Exception:
+        pass
+    
+    return bool(unlocked['v'])
 
 
 def _get_today():
@@ -141,11 +248,13 @@ if __name__ == '__main__':
                 day_config[day_time] = 0
                 first_run = True
             python_box.write_config(day_config, config_log_ini)
-            # 锁屏
+            # 锁屏 - 显示倒计时警告后进入锁屏
             if not first_run:
                 first_run = False
                 if float(config.get(lock_time)) != 0:
-                    use_passwd = lock_screen(duration=float(config.get(lock_time)), passwd=config.get(passwd))
+                    # 显示30秒倒计时警告
+                    show_countdown_warning(countdown_duration=30)
+                    use_passwd = lock_screen(duration=float(config.get(lock_time)), passwd=config.get(passwd), require_confirm=True)
             # 解锁
             r = float(config.get(unlock_time))
             for i in range(int(r if r >= 1 else 1)):  # 测试:默认不为0
@@ -159,6 +268,6 @@ if __name__ == '__main__':
     except Exception as e:
         log_msg(e)
         for i in range(100):
-            res = lock_screen(duration=30, passwd=config.get(passwd))
+            res = lock_screen(duration=30, passwd=config.get(passwd), require_confirm=True)
             if res:
                 time.sleep(10 * 60)
