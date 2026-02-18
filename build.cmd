@@ -1,2 +1,2 @@
-pyinstaller -F lock_relax.py -n timeManager
+pyinstaller --onefile --windowed lock_relax.py --name timeManager
 pyinstaller -F time_upload.py
