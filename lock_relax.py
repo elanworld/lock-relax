@@ -186,7 +186,7 @@ def will_set(client: mqtt.Client):
 
 
 def log_msg(msg):
-    python_box.log(msg, file="config/log_lock_console.log")
+    python_box.log(msg, file="config/log_lock_relax_console.log")
 
 def for_generate_code():
     MqttBase
@@ -200,14 +200,14 @@ if __name__ == '__main__':
     unlock_time = "unlock_time"
     day_time = "day_time" + _get_today()
     today = "today"
-    config_log_ini = "config/log_lock_relax.ini"
+    data_save = "config/data_lock_relax.ini"
     startup_count = "startup count"
     day_limit = "day_limit"
     passwd = "passwd"
     host = "mq host"
     port = "mq port"
     message = "send message"
-    day_config = python_box.read_config("%s" % config_log_ini, {("%s" % day_time): 0, ("%s" % today): _get_today(), startup_count: 0})
+    day_config = python_box.read_config("%s" % data_save, {("%s" % day_time): 0, ("%s" % today): _get_today(), startup_count: 0})
     config = python_box.read_config("config/config_lock_relax.ini",
                                         {("%s" % host): "localhost",
                                          ("%s" % port): "1883",
@@ -237,7 +237,6 @@ if __name__ == '__main__':
             # 首次运行
             first_run = None
             use_passwd = None
-            day_config = python_box.read_config(config_log_ini)
             if day_time not in day_config:
                 day_config[day_time] = 0
             if send_state:
@@ -248,7 +247,7 @@ if __name__ == '__main__':
                 day_config[today] = _get_today()
                 day_config[day_time] = 0
                 first_run = True
-            python_box.write_config(day_config, config_log_ini)
+            python_box.write_config(day_config, data_save)
             # 锁屏 - 显示倒计时警告后进入锁屏
             if not first_run:
                 first_run = False
@@ -263,7 +262,7 @@ if __name__ == '__main__':
                     break  # 不使用密码超过则直接退出循环
                 time.sleep(60 if r >= 1 else 4)  # 测试:默认不为0
                 day_config[day_time] = float(day_config.get(day_time)) + 1
-                python_box.write_config(day_config, config_log_ini)
+                python_box.write_config(day_config, data_save)
                 if send_state:
                     entity_lock.send_sensor_state(day_config[day_time])
     except Exception as e:
