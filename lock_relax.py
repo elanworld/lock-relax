@@ -1,6 +1,7 @@
 # 强制锁频休息
 import ctypes
 import sys
+sys.dont_write_bytecode = True
 import time
 import tkinter as tk
 from tkinter import simpledialog
