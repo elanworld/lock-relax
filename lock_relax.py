@@ -207,13 +207,14 @@ if __name__ == '__main__':
     host = "mq host"
     port = "mq port"
     message = "send message"
+    restore_status = "restore status"
     day_config = python_box.read_config("%s" % data_save, {("%s" % day_time): 0, ("%s" % today): _get_today(), startup_count: 0})
     config = python_box.read_config("config/config_lock_relax.ini",
                                         {("%s" % host): "localhost",
                                          ("%s" % port): "1883",
                                          ("%s" % message): "0#是否发送消息1 0", lock_time: 5, ("%s" % unlock_time): 25,
                                          ("%s" % loop): 48, ("%s" % passwd): 123,
-                                         ("%s" % day_limit): 100}, )
+                                         ("%s" % day_limit): 100, ("%s" % restore_status): 1}, )
     try:
         if not config:
             log_msg("请配置并重新运行")
@@ -251,16 +252,19 @@ if __name__ == '__main__':
             # 锁屏 - 显示倒计时警告后进入锁屏
             if not first_run:
                 first_run = False
-                if float(config.get(lock_time)) != 0:
+                restore_lock = True if config.get(restore_status) != 1 else day_config.get(day_time, 0) % float(config.get(unlock_time)) == 0 # 恢复状态 解锁时间处于周期边界
+                if float(config.get(lock_time)) != 0 and restore_lock == True:
                     # 显示30秒倒计时警告
                     show_countdown_warning(countdown_duration=30)
                     use_passwd = lock_screen(duration=float(config.get(lock_time)), passwd=config.get(passwd), require_confirm=True)
             # 解锁
-            r = float(config.get(unlock_time))
-            for i in range(int(r if r >= 1 else 1)):  # 测试:默认不为0
+            unlock_duration = float(config.get(unlock_time))
+            for i in range(int(unlock_duration if unlock_duration >= 1 else 1)):  # 测试至少循环一次
                 if not use_passwd and float(day_config.get(day_time)) >= float(config.get(day_limit)):  # 判断解锁时间是否超过
                     break  # 不使用密码超过则直接退出循环
-                time.sleep(60 if r >= 1 else 4)  # 测试:默认不为0
+                if config.get(restore_status) == 1 and day_config.get(day_time, 0) != 0 and day_config.get(day_time, 0) % float(config.get(unlock_time)) == 0:
+                    break  # 解锁周期边界
+                time.sleep(60 if unlock_duration >= 1 else unlock_duration * 60)
                 day_config[day_time] = float(day_config.get(day_time)) + 1
                 python_box.write_config(day_config, data_save)
                 if send_state:
