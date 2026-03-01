@@ -1,6 +1,8 @@
 # 强制锁频休息
 import ctypes
 import sys
+
+from screeninfo import get_monitors
 sys.dont_write_bytecode = True
 import time
 import tkinter as tk
@@ -83,7 +85,7 @@ def show_countdown_warning(countdown_duration=30):
     
     return result['ready']
 
-def lock_screen(duration=0.2, passwd=None, require_confirm=False, **kwargs) -> bool:
+def lock_screen(duration=0.2, passwd=None, require_confirm=False, alpha=1, mut_monitor=True, **kwargs) -> bool:
     """
     锁屏ui (tkinter 实现，替代 PySimpleGUI)
     :param duration: 锁屏时长：分
@@ -94,82 +96,86 @@ def lock_screen(duration=0.2, passwd=None, require_confirm=False, **kwargs) -> b
     """
     if duration == 0:
         return False
-    
+        
     bk_color = "#3C3F41"
-    user32 = ctypes.windll.user32
-    screensize = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
     
     unlocked = {'v': False}
-    root = tk.Tk()
-    root.overrideredirect(True)
-    root.attributes('-topmost', True)
-    try:
-        root.attributes('-fullscreen', True)
-    except Exception:
-        root.geometry(f"{screensize[0]}x{screensize[1]}+0+0")
-    
-    root.configure(background=bk_color)
-    font_size = max(12, int(screensize[0] / 15))
-    
-    # 日期时间标签
-    time_var = tk.StringVar(value=time.strftime("%Y-%m-%d", time.localtime()))
-    lbl = tk.Label(root, textvariable=time_var, font=('Arial', font_size), 
-                   bg=bk_color, fg="white")
-    lbl.pack(expand=True, pady=20)
-    
-    # 密码输入框
-    entry_var = tk.StringVar()
-    entry = tk.Entry(root, textvariable=entry_var, show='*', 
-                     font=('Arial', int(font_size/10)), width=30)
-    entry.pack(pady=30)
-    entry.focus_set()
-
-    keyboard.hook_key("windows", lambda x: print(x), True)
-    keyboard.hook_key("alt", lambda x: print(x), True)
-    
-    def close():
-        try:
-            keyboard.unhook_key("windows")
-            keyboard.unhook_key("alt")
-        except Exception:
-            pass
-        try:
-            root.destroy()
-        except Exception:
-            pass
-
-    
-    btn_confirm = tk.Button(root, text="确认", font=('Arial', 12, 'bold'), 
-                        command=close, width=15, bg='#2196F3', fg='white', state=tk.DISABLED)
-    
-    def check_input():
-        # Check password
-        if entry_var.get() == str(passwd):
-            unlocked['v'] = True
-            # 如果需要确认，等待用户点击按钮；否则直接关闭
-            close()
-            return
+    root_tk = tk.Tk()
+    for i, m in enumerate(get_monitors()):
+        if i == 0:
+            root = root_tk
+        else:
+            if not mut_monitor:
+                break
+            root = tk.Toplevel(root_tk)
+        root.overrideredirect(True)
+        root.attributes('-topmost', True)
+        root.geometry(f"{m.width}x{m.height}+{m.x}+{m.y}")
         
-        # Check timeout
-        if time.time() - start_ts > duration * 60:
-            if not require_confirm:
+        if alpha < 1 and alpha >= 0:
+            root.attributes("-alpha", alpha)
+        root.configure(background=bk_color)
+        font_size = max(12, int(m.width / 15))
+        
+        # 日期时间标签
+        time_var = tk.StringVar(value=time.strftime("%Y-%m-%d", time.localtime()))
+        lbl = tk.Label(root, textvariable=time_var, font=('Arial', font_size), 
+                    bg=bk_color, fg="white")
+        lbl.pack(expand=True, pady=20)
+        
+        # 密码输入框
+        entry_var = tk.StringVar()
+        entry = tk.Entry(root, textvariable=entry_var, show='*', 
+                        font=('Arial', int(font_size/10)), width=30)
+        entry.pack(pady=30)
+        entry.focus_set()
+
+        keyboard.hook_key("windows", lambda x: print(x), True)
+        keyboard.hook_key("alt", lambda x: print(x), True)
+        
+        def close():
+            try:
+                keyboard.unhook_key("windows")
+                keyboard.unhook_key("alt")
+            except Exception:
+                pass
+            try:
+                root_tk.destroy()
+            except Exception:
+                pass
+
+        
+        btn_confirm = tk.Button(root, text="确认", font=('Arial', 12, 'bold'), 
+                            command=close, width=15, bg='#2196F3', fg='white', state=tk.DISABLED)
+        
+        start_ts = time.time()
+        def check_input(entry=entry, entry_var=entry_var, start_ts=start_ts, duration=duration, passwd=passwd, require_confirm=require_confirm, time_var=time_var, btn_confirm=btn_confirm, i=i):
+            # Check password
+            if entry_var.get() == str(passwd):
+                unlocked['v'] = True
+                # 如果需要确认，等待用户点击按钮；否则直接关闭
                 close()
                 return
-            else:
-                entry_var.set("⏱ 时间已到，请点击确认")
-                entry['show'] = ''
-                if btn_confirm['state'] == tk.DISABLED:
-                    btn_confirm['state'] = tk.NORMAL
-                    btn_confirm.pack(pady=20)
+            
+            # Check timeout
+            if time.time() - start_ts > duration * 60:
+                if not require_confirm:
+                    close()
+                    return
+                else:
+                    if btn_confirm['state'] == tk.DISABLED:
+                        btn_confirm['state'] = tk.NORMAL
+                        btn_confirm.pack(pady=20)
+                        entry['show'] = ''
+                        entry_var.set("⏱ 时间已到，请点击确认")
+            
+            # Update time label
+            time_var.set(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+            root.after(300, check_input, entry, entry_var, start_ts, duration, passwd, require_confirm, time_var, btn_confirm, i)
         
-        # Update time label
-        time_var.set(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
-        root.after(300, check_input)
-    
-    start_ts = time.time()
-    root.after(300, check_input)
+        root.after(300, check_input, entry, entry_var, start_ts, duration, passwd, require_confirm, time_var, btn_confirm, i)
     try:
-        root.mainloop()
+        root_tk.mainloop()
     except Exception:
         pass
     
@@ -193,8 +199,7 @@ def for_generate_code():
     python_box.read_config
     python_box.random_str
 
-
-if __name__ == '__main__':
+def main():
     loop = "loop"
     lock_time = "lock_time"
     unlock_time = "unlock_time"
@@ -208,13 +213,17 @@ if __name__ == '__main__':
     port = "mq port"
     message = "send message"
     restore_status = "restore status"
+    alpha = "alpha"
+    mut_monitor = "muti monitor"
+    print("Lock Relax started.")
     day_config = python_box.read_config("%s" % data_save, {("%s" % day_time): 0, ("%s" % today): _get_today(), startup_count: 0})
     config = python_box.read_config("config/config_lock_relax.ini",
                                         {("%s" % host): "localhost",
                                          ("%s" % port): "1883",
                                          ("%s" % message): "0#是否发送消息1 0", lock_time: 5, ("%s" % unlock_time): 25,
                                          ("%s" % loop): 48, ("%s" % passwd): 123,
-                                         ("%s" % day_limit): 100, ("%s" % restore_status): 1}, )
+                                         ("%s" % day_limit): 100,
+                                        ("%s" % restore_status): 1, ("%s" % alpha): 1, ("%s" % mut_monitor): 1}, )
     try:
         if not config:
             log_msg("请配置并重新运行")
@@ -252,17 +261,18 @@ if __name__ == '__main__':
             # 锁屏 - 显示倒计时警告后进入锁屏
             if not first_run:
                 first_run = False
-                restore_lock = True if config.get(restore_status) != 1 else day_config.get(day_time, 0) % float(config.get(unlock_time)) == 0 # 恢复状态 解锁时间处于周期边界
+                restore_lock = True if config.get(restore_status) != 1 else float(day_config.get(day_time, 0)) % float(config.get(unlock_time)) == 0 or float(day_config.get(day_time)) >= float(config.get(day_limit)) # 恢复状态 解锁时间处于周期边界
                 if float(config.get(lock_time)) != 0 and restore_lock == True:
                     # 显示30秒倒计时警告
                     show_countdown_warning(countdown_duration=30)
-                    use_passwd = lock_screen(duration=float(config.get(lock_time)), passwd=config.get(passwd), require_confirm=True)
+                    use_passwd = lock_screen(duration=float(config.get(lock_time)), passwd=config.get(passwd), require_confirm=True, alpha=float(config.get(alpha)), mut_monitor=config.get(mut_monitor))
+                    day_config[day_time] = float(day_config.get(day_time)) + 1
             # 解锁
             unlock_duration = float(config.get(unlock_time))
             for i in range(int(unlock_duration if unlock_duration >= 1 else 1)):  # 测试至少循环一次
                 if not use_passwd and float(day_config.get(day_time)) >= float(config.get(day_limit)):  # 判断解锁时间是否超过
                     break  # 不使用密码超过则直接退出循环
-                if config.get(restore_status) == 1 and day_config.get(day_time, 0) != 0 and day_config.get(day_time, 0) % float(config.get(unlock_time)) == 0:
+                if config.get(restore_status) == 1 and float(day_config.get(day_time, 0)) != 0 and float(day_config.get(day_time, 0)) % float(config.get(unlock_time)) == 0:
                     break  # 解锁周期边界
                 time.sleep(60 if unlock_duration >= 1 else unlock_duration * 60)
                 day_config[day_time] = float(day_config.get(day_time)) + 1
@@ -272,6 +282,12 @@ if __name__ == '__main__':
     except Exception as e:
         log_msg(e)
         for i in range(100):
-            res = lock_screen(duration=30, passwd=config.get(passwd), require_confirm=True)
+            res = lock_screen(duration=30, passwd=config.get(passwd), require_confirm=True, alpha=float(config.get(alpha)), mut_monitor=config.get(mut_monitor) )
             if res:
                 time.sleep(10 * 60)
+
+
+
+
+if __name__ == '__main__':
+    main()

@@ -4,3 +4,5 @@ dist
 config
 venv
 **.spec
+**.pyc
+__pycache__
