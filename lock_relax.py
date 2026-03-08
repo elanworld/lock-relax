@@ -257,6 +257,9 @@ def main():
                 day_config[today] = _get_today()
                 day_config[day_time] = 0
                 first_run = True
+            else:
+                if day_config[day_time] == 0:
+                    first_run = True
             python_box.write_config(day_config, data_save)
             # 锁屏 - 显示倒计时警告后进入锁屏
             if not first_run:
