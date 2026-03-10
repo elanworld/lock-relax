@@ -130,17 +130,16 @@ def lock_screen(duration=0.2, passwd=None, require_confirm=False, alpha=1, mut_m
         entry.pack(pady=30)
         entry.focus_set()
 
-        keyboard.hook_key("windows", lambda x: print(x), True)
-        keyboard.hook_key("alt", lambda x: print(x), True)
+        win_hook = keyboard.hook_key("windows", lambda x: print(x), suppress=True)
+        alt_hook = keyboard.hook_key("alt", lambda x: print(x), suppress=True)
         
         def close():
             try:
-                keyboard.unhook_key("windows")
-                keyboard.unhook_key("alt")
+                root_tk.destroy()
             except Exception:
                 pass
             try:
-                root_tk.destroy()
+                keyboard.unhook_all()
             except Exception:
                 pass
 
