@@ -1,6 +1,7 @@
 # 强制锁频休息
 import ctypes
 from ctypes import wintypes
+import math
 import sys
 
 sys.dont_write_bytecode = True
@@ -72,6 +73,37 @@ def get_idle_seconds() -> float:
         return ((tick_count - info.dwTime) & 0xFFFFFFFF) / 1000.0
     except (AttributeError, OSError):
         return 0.0
+
+
+def classify_password_entry(entry_text, passwd, rest_finished):
+    """返回密码解锁的含义：提前绕过、完成休息，或未匹配。"""
+    if str(passwd) not in entry_text:
+        return None
+    return "completed" if rest_finished else "bypass"
+
+
+def is_cycle_boundary(active_minutes, cycle_minutes):
+    """判断累计工作分钟数是否处于周期边界，兼容小数配置。"""
+    cycle_minutes = float(cycle_minutes)
+    if cycle_minutes <= 0:
+        return False
+    remainder = float(active_minutes) % cycle_minutes
+    tolerance = max(1e-9, abs(cycle_minutes) * 1e-9)
+    return (math.isclose(remainder, 0.0, abs_tol=tolerance) or
+            math.isclose(remainder, cycle_minutes, abs_tol=tolerance))
+
+
+def minutes_until_cycle_boundary(active_minutes, cycle_minutes):
+    """返回距下一个周期边界的分钟数；已在边界时返回一个完整周期。"""
+    cycle_minutes = float(cycle_minutes)
+    if cycle_minutes <= 0:
+        return 0.0
+    remainder = float(active_minutes) % cycle_minutes
+    tolerance = max(1e-9, abs(cycle_minutes) * 1e-9)
+    if (math.isclose(remainder, 0.0, abs_tol=tolerance) or
+            math.isclose(remainder, cycle_minutes, abs_tol=tolerance)):
+        return cycle_minutes
+    return cycle_minutes - remainder
 
 
 def should_relock_after_password(password_unlocked_at, relock_delay_minutes=10,
@@ -333,23 +365,27 @@ def lock_screen(duration=0.2, passwd=None, require_confirm=False, alpha=1, mut_m
         
         start_ts = time.monotonic()
         def check_input(entry=entry, entry_var=entry_var, start_ts=start_ts, duration=duration, passwd=passwd, require_confirm=require_confirm, time_var=time_var, btn_confirm=btn_confirm, i=i):
-            # 最低休息时长内仍允许密码立即解锁，但稍后会重新进入锁屏流程。
-            if str(passwd) in entry_var.get():
-                unlocked['v'] = True
+            rest_finished = time.monotonic() - start_ts >= duration * 60
+            password_action = classify_password_entry(
+                entry_var.get(), passwd, rest_finished
+            )
+            if password_action is not None:
+                # 计时前输入密码是提前绕过；计时后输入密码则算完整休息。
+                unlocked['v'] = password_action == "bypass"
                 close()
                 return
-            # 到达完整休息时长后视为正常完成，不再把随后输入的密码算作绕过。
-            if time.monotonic() - start_ts >= duration * 60:
+
+            if rest_finished:
                 if not require_confirm:
                     close()
                     return
-                else:
-                    if btn_confirm['state'] == tk.DISABLED:
-                        btn_confirm['state'] = tk.NORMAL
-                        btn_confirm.pack(pady=20)
-                        entry['show'] = ''
-                        entry_var.set("⏱ 时间已到，请点击确认")
-                    return
+                if btn_confirm['state'] == tk.DISABLED:
+                    btn_confirm['state'] = tk.NORMAL
+                    btn_confirm.pack(pady=20)
+                    entry.focus_set()
+                # 保持密码框可用，等待密码或确认按钮关闭休息页。
+                root.after(300, check_input, entry, entry_var, start_ts, duration, passwd, require_confirm, time_var, btn_confirm, i)
+                return
 
             
             # Update time label
@@ -442,8 +478,10 @@ def main():
                 log_msg(e)
                 send_state = False
 
-        def record_active_minute():
-            day_config[day_time] = float(day_config.get(day_time, 0)) + 1
+        def record_active_minute(minutes=1):
+            day_config[day_time] = round(
+                float(day_config.get(day_time, 0)) + float(minutes), 10
+            )
             python_box.write_config(day_config, data_save)
             if send_state:
                 entity_lock.send_sensor_state(day_config[day_time])
@@ -467,10 +505,17 @@ def main():
                     first_run = True
             python_box.write_config(day_config, data_save)
             # 锁屏 - 显示倒计时警告后进入锁屏
+            completed_lock = False
             if not first_run:
                 first_run = False
-                restore_lock = True if config.get(restore_status) != 1 else float(day_config.get(day_time, 0)) % float(config.get(unlock_time)) == 0 or float(day_config.get(day_time)) >= float(config.get(day_limit)) # 恢复状态 解锁时间处于周期边界
-                if float(config.get(lock_time)) != 0 and restore_lock == True:
+                restore_lock = (
+                    config.get(restore_status) != 1 or
+                    is_cycle_boundary(
+                        day_config.get(day_time, 0), config.get(unlock_time)
+                    ) or
+                    float(day_config.get(day_time)) >= float(config.get(day_limit))
+                )  # 恢复状态：解锁时间处于周期边界
+                if float(config.get(lock_time)) != 0 and restore_lock:
                     # 密码可立即解锁，但只会延后；到时或无人操作后重新走预警和锁屏。
                     run_lock_retry_cycle(
                         lock_duration=float(config.get(lock_time)),
@@ -484,16 +529,22 @@ def main():
                         on_active_minute=record_active_minute,
                     )
                     use_passwd = False
-                    record_active_minute()
+                    completed_lock = True
             # 解锁
             unlock_duration = float(config.get(unlock_time))
-            for i in range(int(unlock_duration if unlock_duration >= 1 else 1)):  # 测试至少循环一次
+            if config.get(restore_status) == 1 and not completed_lock:
+                remaining_work = minutes_until_cycle_boundary(
+                    day_config.get(day_time, 0), unlock_duration
+                )
+            else:
+                remaining_work = max(0.0, unlock_duration)
+            while remaining_work > 1e-9:
                 if not use_passwd and float(day_config.get(day_time)) >= float(config.get(day_limit)):  # 判断解锁时间是否超过
                     break  # 不使用密码超过则直接退出循环
-                if config.get(restore_status) == 1 and float(day_config.get(day_time, 0)) != 0 and float(day_config.get(day_time, 0)) % float(config.get(unlock_time)) == 0:
-                    break  # 解锁周期边界
-                time.sleep(60 if unlock_duration >= 1 else unlock_duration * 60)
-                record_active_minute()
+                work_chunk = min(1.0, remaining_work)
+                time.sleep(work_chunk * 60)
+                record_active_minute(work_chunk)
+                remaining_work = max(0.0, remaining_work - work_chunk)
     except Exception as e:
         log_msg(e)
         for i in range(100):

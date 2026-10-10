@@ -2,6 +2,8 @@ import sys
 import types
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 def _install_dependency_stubs():
     """允许在未安装打包依赖的开发环境中测试纯状态逻辑。"""
@@ -36,6 +38,40 @@ def _install_dependency_stubs():
 
 _install_dependency_stubs()
 import lock_relax
+
+
+def test_password_before_rest_finishes_is_bypass():
+    assert lock_relax.classify_password_entry("123", 123, False) == "bypass"
+
+
+def test_password_after_rest_finishes_is_completed_rest():
+    assert lock_relax.classify_password_entry("123", 123, True) == "completed"
+
+
+def test_wrong_password_does_not_unlock_after_rest_finishes():
+    assert lock_relax.classify_password_entry("456", 123, True) is None
+
+
+@pytest.mark.parametrize("active_minutes, cycle_minutes", [
+    (0.3, 0.1),
+    (1, 0.1),
+    (25.2, 0.3),
+    (45.5, 45.5),
+])
+def test_decimal_cycle_boundary_is_detected(active_minutes, cycle_minutes):
+    assert lock_relax.is_cycle_boundary(active_minutes, cycle_minutes)
+
+
+def test_decimal_cycle_non_boundary_is_not_due_yet():
+    assert not lock_relax.is_cycle_boundary(25, 0.3)
+
+
+def test_decimal_cycle_waits_only_until_next_boundary():
+    assert lock_relax.minutes_until_cycle_boundary(25, 0.3) == pytest.approx(0.2)
+
+
+def test_cycle_at_boundary_waits_a_full_work_period():
+    assert lock_relax.minutes_until_cycle_boundary(25.2, 0.3) == pytest.approx(0.3)
 
 
 def test_password_unlock_relocks_after_ten_minutes():
