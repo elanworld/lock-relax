@@ -1,8 +1,8 @@
 # 强制锁频休息
 import ctypes
+from ctypes import wintypes
 import sys
 
-from screeninfo import get_monitors
 sys.dont_write_bytecode = True
 import time
 import tkinter as tk
@@ -15,75 +15,254 @@ from tools.server_box.mqtt.homeassistant_mq_entity import HomeAssistantEntity
 from tools.server_box.mqtt.mqtt_utils import MqttBase
 
 
-def show_countdown_warning(countdown_duration=30):
-    """显示30秒倒计时警告窗口，提示即将进入锁屏。
-    用户可以点击"开始"提前进入，或等待倒计时结束自动进入。
-    
-    :param countdown_duration: 倒计时秒数（默认30）
-    :return: True 表示用户点击了"开始"或倒计时结束
-    """
-    result = {'ready': False}
-    
+class _LastInputInfo(ctypes.Structure):
+    _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
+
+
+class _Monitor:
+    def __init__(self, width, height, x, y):
+        self.width = width
+        self.height = height
+        self.x = x
+        self.y = y
+
+
+def get_monitors():
+    """使用 Windows API 获取显示器边界，避免额外的 screeninfo 运行依赖。"""
+    monitors = []
+    if sys.platform != "win32":
+        return monitors
+
+    monitor_enum_proc = ctypes.WINFUNCTYPE(
+        wintypes.BOOL,
+        wintypes.HMONITOR,
+        wintypes.HDC,
+        ctypes.POINTER(wintypes.RECT),
+        wintypes.LPARAM,
+    )
+
+    def append_monitor(_monitor, _hdc, rect_pointer, _data):
+        rect = rect_pointer.contents
+        monitors.append(_Monitor(
+            width=rect.right - rect.left,
+            height=rect.bottom - rect.top,
+            x=rect.left,
+            y=rect.top,
+        ))
+        return True
+
+    try:
+        ctypes.windll.user32.EnumDisplayMonitors(
+            None, None, monitor_enum_proc(append_monitor), 0
+        )
+    except (AttributeError, OSError):
+        return []
+    return monitors
+
+
+def get_idle_seconds() -> float:
+    """返回 Windows 最近一次键鼠输入距现在的秒数；读取失败时按 0 处理。"""
+    try:
+        info = _LastInputInfo()
+        info.cbSize = ctypes.sizeof(info)
+        if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
+            return 0.0
+        ctypes.windll.kernel32.GetTickCount.restype = ctypes.c_uint
+        tick_count = ctypes.windll.kernel32.GetTickCount()
+        return ((tick_count - info.dwTime) & 0xFFFFFFFF) / 1000.0
+    except (AttributeError, OSError):
+        return 0.0
+
+
+def should_relock_after_password(password_unlocked_at, relock_delay_minutes=10,
+                                 relock_idle_seconds=60, now=None,
+                                 idle_seconds=None) -> bool:
+    """密码解锁后，达到延后时长或无人操作阈值时请求再次锁屏。"""
+    if password_unlocked_at is None:
+        return False
+
+    now = time.monotonic() if now is None else now
+    delay_minutes = float(relock_delay_minutes)
+    idle_limit = float(relock_idle_seconds)
+    delay_reached = delay_minutes > 0 and (
+        now - password_unlocked_at >= delay_minutes * 60
+    )
+
+    idle_reached = False
+    if idle_limit > 0:
+        idle_seconds = get_idle_seconds() if idle_seconds is None else idle_seconds
+        idle_reached = idle_seconds >= idle_limit
+    return delay_reached or idle_reached
+
+
+def wait_for_password_relock(wait_seconds, password_unlocked_at,
+                             relock_delay_minutes=10,
+                             relock_idle_seconds=60,
+                             poll_interval=1) -> bool:
+    """等待工作片段；密码解锁后的重锁条件满足时提前返回 True。"""
+    wait_seconds = max(0.0, float(wait_seconds))
+    if password_unlocked_at is None:
+        time.sleep(wait_seconds)
+        return False
+
+    end_at = time.monotonic() + wait_seconds
+    while True:
+        now = time.monotonic()
+        if should_relock_after_password(
+                password_unlocked_at,
+                relock_delay_minutes=relock_delay_minutes,
+                relock_idle_seconds=relock_idle_seconds,
+                now=now):
+            return True
+        remaining = end_at - now
+        if remaining <= 0:
+            return False
+        time.sleep(min(max(0.1, float(poll_interval)), remaining))
+
+
+def _set_edge_window_non_activating(root):
+    """让边缘提示不抢焦点，并允许鼠标点击穿透。"""
+    if sys.platform != "win32":
+        return
+    try:
+        user32 = ctypes.windll.user32
+        user32.GetParent.argtypes = [wintypes.HWND]
+        user32.GetParent.restype = wintypes.HWND
+        hwnd = wintypes.HWND(root.winfo_id())
+        parent_hwnd = user32.GetParent(hwnd)
+        if parent_hwnd:
+            hwnd = parent_hwnd
+        gwl_exstyle = -20
+        ws_ex_transparent = 0x00000020
+        ws_ex_toolwindow = 0x00000080
+        ws_ex_noactivate = 0x08000000
+        get_window_long = (user32.GetWindowLongPtrW if ctypes.sizeof(ctypes.c_void_p) == 8
+                           else user32.GetWindowLongW)
+        set_window_long = (user32.SetWindowLongPtrW if ctypes.sizeof(ctypes.c_void_p) == 8
+                           else user32.SetWindowLongW)
+        get_window_long.argtypes = [wintypes.HWND, ctypes.c_int]
+        get_window_long.restype = ctypes.c_ssize_t
+        set_window_long.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+        set_window_long.restype = ctypes.c_ssize_t
+        style = get_window_long(hwnd, gwl_exstyle)
+        set_window_long(
+            hwnd,
+            gwl_exstyle,
+            style | ws_ex_transparent | ws_ex_toolwindow | ws_ex_noactivate,
+        )
+    except (AttributeError, OSError):
+        pass
+
+
+def show_countdown_warning(countdown_duration=60, expanded_duration=3):
+    """在屏幕右上边缘短暂提示，然后缩成细线直到进入锁屏。"""
     root = tk.Tk()
-    root.title("锁屏警告")
-    root.geometry("400x200")
+    root.title("休息提示")
+    root.overrideredirect(True)
     root.attributes('-topmost', True)
-    
-    # 居中显示
+    try:
+        root.attributes('-alpha', 0.9)
+    except tk.TclError:
+        pass
+
+    expanded_width = 180
+    expanded_height = 34
+    line_width = 72
+    line_height = 4
+    margin = 8
+    bg_color = "#343A40"
+    line_color = "#78909C"
+
+    root.configure(background=bg_color)
+    screen_width = root.winfo_screenwidth()
+    x = screen_width - expanded_width - margin
+    root.geometry(f"{expanded_width}x{expanded_height}+{x}+{margin}")
+
+    label = tk.Label(
+        root,
+        text="1分钟后暂停",
+        font=('Microsoft YaHei UI', 10),
+        bg=bg_color,
+        fg="#F1F3F5",
+        padx=12,
+        pady=6,
+    )
+    label.pack(fill=tk.BOTH, expand=True)
     root.update_idletasks()
-    x = (root.winfo_screenwidth() // 2) - 200
-    y = (root.winfo_screenheight() // 2) - 100
-    root.geometry(f"+{x}+{y}")
-    
-    # 倒计时标签
-    countdown_var = tk.StringVar(value=str(countdown_duration))
-    lbl_countdown = tk.Label(root, textvariable=countdown_var, 
-                             font=('Arial', 72, 'bold'), fg='red')
-    lbl_countdown.pack(pady=20)
-    
-    # 提示文字
-    lbl_info = tk.Label(root, text='即将进入锁屏\n点击"开始"或等待倒计时结束', 
-                        font=('Arial', 14))
-    lbl_info.pack(pady=10)
-    
-    # 按钮框
-    btn_frame = tk.Frame(root)
-    btn_frame.pack(pady=20)
-    
-    def on_start():
-        result['ready'] = True
+    _set_edge_window_non_activating(root)
+
+    def collapse_to_line():
+        try:
+            label.pack_forget()
+            root.configure(background=line_color)
+            line_x = screen_width - line_width - margin
+            root.geometry(f"{line_width}x{line_height}+{line_x}+{margin}")
+        except tk.TclError:
+            pass
+
+    def finish_warning():
         try:
             root.destroy()
-        except Exception:
+        except tk.TclError:
             pass
-    
-    btn_start = tk.Button(btn_frame, text="开始", font=('Arial', 12, 'bold'), 
-                          command=on_start, width=15, bg='#FF6B6B', fg='white')
-    btn_start.pack(side=tk.LEFT, padx=10)
-    
-    # 倒计时逻辑
-    remaining = [countdown_duration]
-    
-    def update_countdown():
-        if remaining[0] <= 0:
-            result['ready'] = True
-            try:
-                root.destroy()
-            except Exception:
-                pass
-            return
-        
-        countdown_var.set(str(remaining[0]))
-        remaining[0] -= 1
-        root.after(1000, update_countdown)
-    
-    root.after(1000, update_countdown)
+
+    duration_ms = max(0, int(float(countdown_duration) * 1000))
+    expanded_ms = min(duration_ms, max(0, int(float(expanded_duration) * 1000)))
+    root.after(expanded_ms, collapse_to_line)
+    root.after(duration_ms, finish_warning)
     try:
         root.mainloop()
-    except Exception:
+    except tk.TclError:
         pass
-    
-    return result['ready']
+    return True
+
+
+def run_lock_retry_cycle(lock_duration, passwd, alpha=1, mut_monitor=True,
+                         warning_duration=60, warning_expanded_duration=3,
+                         relock_delay_minutes=10, relock_idle_seconds=60,
+                         on_active_minute=None, warning_fn=None, lock_fn=None,
+                         wait_fn=None, clock=None) -> int:
+    """运行一次完整休息；密码解锁只延后，直到正常完成才返回。"""
+    warning_fn = show_countdown_warning if warning_fn is None else warning_fn
+    lock_fn = lock_screen if lock_fn is None else lock_fn
+    wait_fn = wait_for_password_relock if wait_fn is None else wait_fn
+    clock = time.monotonic if clock is None else clock
+    bypass_count = 0
+
+    while True:
+        warning_fn(
+            countdown_duration=warning_duration,
+            expanded_duration=warning_expanded_duration,
+        )
+        used_password = lock_fn(
+            duration=lock_duration,
+            passwd=passwd,
+            require_confirm=True,
+            alpha=alpha,
+            mut_monitor=mut_monitor,
+        )
+        if not used_password:
+            return bypass_count
+
+        bypass_count += 1
+        if float(relock_delay_minutes) <= 0 and float(relock_idle_seconds) <= 0:
+            return bypass_count
+        password_unlocked_at = clock()
+        accounted_minutes = 0
+        while True:
+            relock_requested = wait_fn(
+                1,
+                password_unlocked_at,
+                relock_delay_minutes=relock_delay_minutes,
+                relock_idle_seconds=relock_idle_seconds,
+            )
+            elapsed_minutes = int((clock() - password_unlocked_at) // 60)
+            while accounted_minutes < elapsed_minutes:
+                if on_active_minute is not None:
+                    on_active_minute()
+                accounted_minutes += 1
+            if relock_requested:
+                break
 
 def lock_screen(duration=0.2, passwd=None, require_confirm=False, alpha=1, mut_monitor=True, **kwargs) -> bool:
     """
@@ -101,7 +280,12 @@ def lock_screen(duration=0.2, passwd=None, require_confirm=False, alpha=1, mut_m
     
     unlocked = {'v': False}
     root_tk = tk.Tk()
-    for i, m in enumerate(get_monitors()):
+    monitors = get_monitors()
+    if not monitors:
+        monitors = [_Monitor(
+            root_tk.winfo_screenwidth(), root_tk.winfo_screenheight(), 0, 0
+        )]
+    for i, m in enumerate(monitors):
         if i == 0:
             root = root_tk
         else:
@@ -110,7 +294,7 @@ def lock_screen(duration=0.2, passwd=None, require_confirm=False, alpha=1, mut_m
             root = tk.Toplevel(root_tk)
         root.overrideredirect(True)
         root.attributes('-topmost', True)
-        root.geometry(f"{m.width}x{m.height}+{m.x}+{m.y}")
+        root.geometry(f"{m.width}x{m.height}{m.x:+d}{m.y:+d}")
         
         if alpha < 1 and alpha >= 0:
             root.attributes("-alpha", alpha)
@@ -147,17 +331,15 @@ def lock_screen(duration=0.2, passwd=None, require_confirm=False, alpha=1, mut_m
         btn_confirm = tk.Button(root, text="确认", font=('Arial', 12, 'bold'), 
                             command=close, width=15, bg='#2196F3', fg='white', state=tk.DISABLED)
         
-        start_ts = time.time()
+        start_ts = time.monotonic()
         def check_input(entry=entry, entry_var=entry_var, start_ts=start_ts, duration=duration, passwd=passwd, require_confirm=require_confirm, time_var=time_var, btn_confirm=btn_confirm, i=i):
-            # Check password
-            if entry_var.get() == str(passwd):
+            # 最低休息时长内仍允许密码立即解锁，但稍后会重新进入锁屏流程。
+            if str(passwd) in entry_var.get():
                 unlocked['v'] = True
-                # 如果需要确认，等待用户点击按钮；否则直接关闭
                 close()
                 return
-            
-            # Check timeout
-            if time.time() - start_ts > duration * 60:
+            # 到达完整休息时长后视为正常完成，不再把随后输入的密码算作绕过。
+            if time.monotonic() - start_ts >= duration * 60:
                 if not require_confirm:
                     close()
                     return
@@ -167,6 +349,8 @@ def lock_screen(duration=0.2, passwd=None, require_confirm=False, alpha=1, mut_m
                         btn_confirm.pack(pady=20)
                         entry['show'] = ''
                         entry_var.set("⏱ 时间已到，请点击确认")
+                    return
+
             
             # Update time label
             time_var.set(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
@@ -214,6 +398,10 @@ def main():
     restore_status = "restore status"
     alpha = "alpha"
     mut_monitor = "muti monitor"
+    warning_time = "warning_time"
+    warning_expanded_time = "warning_expanded_time"
+    password_relock_time = "password_relock_time"
+    password_relock_idle = "password_relock_idle"
     print("Lock Relax started.")
     day_config = python_box.read_config("%s" % data_save, {("%s" % day_time): 0, ("%s" % today): _get_today(), startup_count: 0})
     config = python_box.read_config("config/config_lock_relax.ini",
@@ -222,11 +410,22 @@ def main():
                                          ("%s" % message): "0#是否发送消息1 0", lock_time: 5, ("%s" % unlock_time): 25,
                                          ("%s" % loop): 48, ("%s" % passwd): 123,
                                          ("%s" % day_limit): 100,
-                                        ("%s" % restore_status): 1, ("%s" % alpha): 1, ("%s" % mut_monitor): 1}, )
+                                         ("%s" % restore_status): 1, ("%s" % alpha): 1, ("%s" % mut_monitor): 1,
+                                         warning_time: 60, warning_expanded_time: 3,
+                                         password_relock_time: 10, password_relock_idle: 60},
+                                    apend_default=True)
+    warning_duration_seconds = 60.0
+    warning_expanded_seconds = 3.0
+    password_relock_minutes = 10.0
+    password_relock_idle_seconds = 60.0
     try:
         if not config:
             log_msg("请配置并重新运行")
             sys.exit(0)
+        warning_duration_seconds = float(config.get(warning_time, 60))
+        warning_expanded_seconds = float(config.get(warning_expanded_time, 3))
+        password_relock_minutes = float(config.get(password_relock_time, 10))
+        password_relock_idle_seconds = float(config.get(password_relock_idle, 60))
         send_state = config.get(message) == 1
         day_config[startup_count] = day_config.get(startup_count, 0) + 1
         log_msg(fr"config: {config}")
@@ -242,6 +441,13 @@ def main():
             except Exception as e:
                 log_msg(e)
                 send_state = False
+
+        def record_active_minute():
+            day_config[day_time] = float(day_config.get(day_time, 0)) + 1
+            python_box.write_config(day_config, data_save)
+            if send_state:
+                entity_lock.send_sensor_state(day_config[day_time])
+
         for _ in range(int(config.get(loop))):
             # 首次运行
             first_run = None
@@ -265,10 +471,20 @@ def main():
                 first_run = False
                 restore_lock = True if config.get(restore_status) != 1 else float(day_config.get(day_time, 0)) % float(config.get(unlock_time)) == 0 or float(day_config.get(day_time)) >= float(config.get(day_limit)) # 恢复状态 解锁时间处于周期边界
                 if float(config.get(lock_time)) != 0 and restore_lock == True:
-                    # 显示30秒倒计时警告
-                    show_countdown_warning(countdown_duration=30)
-                    use_passwd = lock_screen(duration=float(config.get(lock_time)), passwd=config.get(passwd), require_confirm=True, alpha=float(config.get(alpha)), mut_monitor=config.get(mut_monitor))
-                    day_config[day_time] = float(day_config.get(day_time)) + 1
+                    # 密码可立即解锁，但只会延后；到时或无人操作后重新走预警和锁屏。
+                    run_lock_retry_cycle(
+                        lock_duration=float(config.get(lock_time)),
+                        passwd=config.get(passwd),
+                        alpha=float(config.get(alpha)),
+                        mut_monitor=config.get(mut_monitor),
+                        warning_duration=warning_duration_seconds,
+                        warning_expanded_duration=warning_expanded_seconds,
+                        relock_delay_minutes=password_relock_minutes,
+                        relock_idle_seconds=password_relock_idle_seconds,
+                        on_active_minute=record_active_minute,
+                    )
+                    use_passwd = False
+                    record_active_minute()
             # 解锁
             unlock_duration = float(config.get(unlock_time))
             for i in range(int(unlock_duration if unlock_duration >= 1 else 1)):  # 测试至少循环一次
@@ -277,16 +493,20 @@ def main():
                 if config.get(restore_status) == 1 and float(day_config.get(day_time, 0)) != 0 and float(day_config.get(day_time, 0)) % float(config.get(unlock_time)) == 0:
                     break  # 解锁周期边界
                 time.sleep(60 if unlock_duration >= 1 else unlock_duration * 60)
-                day_config[day_time] = float(day_config.get(day_time)) + 1
-                python_box.write_config(day_config, data_save)
-                if send_state:
-                    entity_lock.send_sensor_state(day_config[day_time])
+                record_active_minute()
     except Exception as e:
         log_msg(e)
         for i in range(100):
-            res = lock_screen(duration=30, passwd=config.get(passwd), require_confirm=True, alpha=float(config.get(alpha)), mut_monitor=config.get(mut_monitor) )
-            if res:
-                time.sleep(10 * 60)
+            run_lock_retry_cycle(
+                lock_duration=30,
+                passwd=config.get(passwd),
+                alpha=float(config.get(alpha)),
+                mut_monitor=config.get(mut_monitor),
+                warning_duration=warning_duration_seconds,
+                warning_expanded_duration=warning_expanded_seconds,
+                relock_delay_minutes=password_relock_minutes,
+                relock_idle_seconds=password_relock_idle_seconds,
+            )
 
 
 
